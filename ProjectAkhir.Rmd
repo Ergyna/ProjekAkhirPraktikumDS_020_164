@@ -1,0 +1,342 @@
+---
+title: "Project Akhir"
+author: "ALIFIAN ZUFAANI/123200164" "ERGYNA ISLAMIAH/123200020"
+date: "`r Sys.Date()`"
+output:
+  word_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+## ANALISIS FAKTOR PENYEBAB PEMBATALAN PEMESANAN HOTEL OLEH CUSTOMER SAAT LIBURAN
+
+
+1. Load library dan dataset yang akan digunakan
+
+
+```{r}
+install.packages('caTools')
+install.packages('caret')
+install.packages('e1071')
+install.packages("rlang")
+install.packages("effects")
+install.packages('devtools')
+devtools::install_github("r-lib/vctrs")
+pkgbuild::check_build_tools(debug = TRUE)
+install.packages('vctrs')
+library(lattice)
+library(ggplot2)
+library(googledrive)
+library(tidyverse)
+library(dplyr)
+library(caTools)
+library(caret)
+library(e1071)
+library(rlang)
+library(effects)
+
+```
+
+
+2. Load data csv dari lokal dan filter semua data hotel dari negara Benua Asia
+
+
+```{r}
+
+hotels <- read.csv("D:/KULIAHKU/Semester 5/Praktikum Data Science/Project/archivehotel/hotel_bookings.csv")
+asian_hotels <- hotels %>% 
+  filter(country == 'IND' | country == 'CHN' | country == 'JPN' | country == 'OMN'
+         | country == 'CN' | country == 'ISR' | country == 'KOR' | country == 'ARE'
+         | country == 'HKG' | country == 'IRN' | country == 'CYP' | country == 'KWT'
+         | country == 'MDV' | country == 'KAZ' | country == 'PAK' | country == 'IND'
+         | country == 'LBN' | country == 'PHL' | country == 'AZE' | country == 'BHR'
+         | country == 'THA' | country == 'MYS' | country == 'ARM' | country == 'LKA'
+         | country == 'JOR' | country == 'SYR' | country == 'SGP' | country == 'SAU'
+         | country == 'VNM' | country == 'QAT' | country == 'UZB' | country == 'NPL'
+         | country == 'MAC' | country == 'TWN' | country == 'IRQ' | country == 'KHM'
+         | country == 'BGD' | country == 'TJK' | country == 'TMP' | country == 'MMR'
+         | country == 'LAO')
+
+head(asian_hotels)
+
+```
+
+
+3. Melihat perbandingan jumlah yang cancel dan tidak
+
+
+```{r}
+
+#check balance data
+jumlah_cancel <- table(asian_hotels$is_canceled)
+
+barplot(jumlah_cancel,
+main = "Perbandingan Jumlah Pembatalan Pemesanan Hotel Saat Liburan",
+xlab = "Keterangan",
+ylab = "Jumlah",
+col = c("blue","black")
+)
+legend("topright",
+c("Tidak Cancel","Cancel"),
+fill = c("blue","black")
+)
+```
+```{r}
+hotel_detail <- asian_hotels %>% 
+  mutate(is_canceled = sapply(as.character(is_canceled), switch,
+                              "1" = "Cancel",
+                              "0" = "Tidak Cancel")) %>%
+  mutate(is_canceled = as.factor(is_canceled))
+
+hotel_type_freq <- hotel_detail %>%
+  count(hotel, is_canceled)
+
+ggplot(data = hotel_type_freq, mapping = aes(x = hotel, y = n)) +
+  geom_col(mapping = aes(fill = is_canceled),
+           position = "dodge") +
+  labs(title = "Perbandingan Jumlah Pembatalan Pemesanan Hotel Saat Liburan",
+       subtitle = "Berdasarkan Jenis Hotel di Asia",
+       x = "Jenis Hotel",
+       y = "Jumlah Pesanan") +
+  theme_minimal() +
+  theme(legend.title = element_blank(), axis.title.y = element_text(vjust = 1))
+```
+
+
+4. Preprocessing data
+
+
+```{r}
+
+# check missing value
+colSums(is.na(asian_hotels))
+
+```
+
+```{r}
+
+# replace empty string and NULL string with NA (missing value)
+asian_hotels[asian_hotels==""]<-NA
+asian_hotels[asian_hotels=="NULL"]<-NA
+
+# check missing value again
+colSums(is.na(asian_hotels))
+
+```
+
+```{r}
+
+#drop agent and company variable
+asian_hotels = asian_hotels %>% select(-agent,-company)
+
+#check column name's data
+names(asian_hotels)
+
+```
+
+```{r}
+
+# Ubah tipe data character ke factor
+# Kenapa diubah ke tipe data factorial ? karena factorial adalah variabel yang sangat cocok digunakan pada kasus analisa statistik, menggambar grafik (plotting), dan pemodelan regresi. Banyaknya function yang menggunakan factor dikarenakan dengan adanya factor, maka nilai kategoris lebih mudah diolah dan dianalisa.
+
+asian_hotels$hotel <- as.factor(asian_hotels$hotel)  
+asian_hotels$arrival_date_month <- as.factor(asian_hotels$arrival_date_month)  
+asian_hotels$meal <- as.factor(asian_hotels$meal)
+asian_hotels$market_segment <- as.factor(asian_hotels$market_segment)  
+asian_hotels$distribution_channel <- as.factor(asian_hotels$distribution_channel)  
+asian_hotels$reserved_room_type <- as.factor(asian_hotels$reserved_room_type)  
+asian_hotels$assigned_room_type <- as.factor(asian_hotels$assigned_room_type)  
+asian_hotels$deposit_type <- as.factor(asian_hotels$deposit_type)   
+asian_hotels$customer_type <- as.factor(asian_hotels$customer_type)  
+asian_hotels$reservation_status<- as.factor(asian_hotels$reservation_status)
+```
+
+
+5. Membagi data menjadi 2 bagian, train set dan test set
+
+
+```{r}
+
+# Split data into train (70%) and test data (30%)
+set.seed(1234)
+sample <- sample.split(asian_hotels,SplitRatio=0.70)
+train <- subset(asian_hotels,sample==TRUE)
+test <- subset(asian_hotels,sample==FALSE)
+
+```
+
+
+6. Membangun model yang akan digunakan, yaitu Logistic Regression
+
+
+```{r}
+
+# Logistic regression model 1
+formula1 <- is_canceled ~ hotel + lead_time + arrival_date_year + 
+  arrival_date_month + arrival_date_week_number + arrival_date_day_of_month	+
+  stays_in_weekend_nights + stays_in_week_nights + adults + children + babies +
+  meal + market_segment + distribution_channel + reserved_room_type +
+  booking_changes + adr + required_car_parking_spaces + 
+  total_of_special_requests + reservation_status
+model1 <- glm(formula1,data=train,family=binomial(link="logit"))
+summary(model1)
+```
+
+
+Hampir semua variabel memiliki p-value = 1, artinya semua variabel tidak signifikan dengan peringatan bahwa model bersifat konvergen. Salah satu penyebab model konvergen adalah variabel terlalu banyak faktor.
+
+
+```{r}
+
+# calculate accuration score
+pred <- predict(model1,test,type='response')
+#(keterangan,benar, salah)
+pred <- as.factor(ifelse(pred>0.5,1,0))
+caret::confusionMatrix(pred,as.factor(test$is_canceled))
+```
+
+
+Setelah dicek accuracy scorenya melalui confussion matrix, nilainya 100%, artinya model yang konvergen tadi perlu menghilangkan beberapa variabel yang terlalu banyak faktornya di model ke-2 yang akan dibangun.
+
+
+```{r}
+
+# Build the 2nd regression logistic model, after drop some variable that too many factor
+formula2 <- is_canceled ~ hotel + lead_time + arrival_date_year +
+  arrival_date_week_number + arrival_date_day_of_month	+ stays_in_weekend_nights +
+  stays_in_week_nights + adults + children + babies + is_repeated_guest + 
+  previous_cancellations + previous_bookings_not_canceled + booking_changes + 
+  days_in_waiting_list + adr + required_car_parking_spaces + 
+  total_of_special_requests
+model2 <- glm(formula2,data=train,family=binomial(link="logit"))
+summary(model2)
+```
+
+
+Dari model ke-2, ada banyak variabel yang tidak begitu berpengaruh terhadap model: stays_in_week_nights, adults, children, babies, is_repeated_guest, previous_bookings_not_canceled, days_in_waiting_list, dan required_car_parking_spaces. Karena variabel tersebut memiliki p-value lebih dari 5% atau 0,05. Dan juga ada variabel yang memiliki value NA, yaitu previous_cancellations, jadi akan dihilangkan di model ke-3.
+
+
+```{r}
+
+# Calculate accuracy score the 2nd model
+pred2=predict(model2,test,type='response')
+pred2=as.factor(ifelse(pred2>0.5,1,0))
+caret::confusionMatrix(pred2,as.factor(test$is_canceled))
+```
+
+```{r}
+
+# Check Variable Importance the 2nd Model
+V2 <- caret::varImp(model2, scale = FALSE)
+
+ggplot2::ggplot(V2, aes(x=reorder(rownames(V2),Overall), y=Overall)) +
+geom_point( color="blue", size=4, alpha=0.6)+
+geom_segment( aes(x=rownames(V2), xend=rownames(V2), y=0, yend=Overall), 
+color='skyblue') +
+xlab('Variable')+
+ylab('Overall Importance')+
+theme_light() +
+coord_flip()
+
+```
+
+
+hotel, adr, dan total_of_special_requests adalah 3 variabel yang berdampak besar untuk pembatalan pemesanan. Tapi belum selesai karena model yang belum cukup bagus.
+
+babies, required_car_parking_spaces, dan previous_bookings_not_canceled adalah variabel yang memliki nilai terendah sehingga tidak signifikan terhadap model. Jadi, akan dihilangkan pada model ke-3.
+
+
+```{r}
+
+# Build the 3rd regressiom model
+formula3 <- is_canceled ~ hotel + lead_time + arrival_date_year + 
+  arrival_date_week_number + arrival_date_day_of_month +
+  stays_in_weekend_nights + stays_in_week_nights + adults + is_repeated_guest +
+  booking_changes + days_in_waiting_list + adr + total_of_special_requests
+model3 <- glm(formula3,data=train,family=binomial(link="logit"))
+summary(model3)
+```
+```
+
+Ternyata masih ada beberapa variabel yang tidak signifikan terhadap model, stays_in_weekend_nights, adults, is_repeated_guest, dan days_in_waiting_list karena nilai p-value nya di atas 5% atau 0,05. jadi variabel tersebut dihilangkan saja di model ke-4 yang akan dibangun.
+
+
+```
+```{r}
+#Build the 4rd regressiom model
+formula4 <- is_canceled ~ hotel + lead_time + arrival_date_year + 
+  arrival_date_week_number + stays_in_week_nights + booking_changes + 
+  adr + total_of_special_requests
+model4 <- glm(formula4,data=train,family=binomial(link="logit"))
+summary(model4)
+```
+
+Semua variabel sudah memiliki nilai p-value dibawah 0,05, artinya semua variabel signifikan terhadap model logistic regression yang konvergen.
+
+
+```{r}
+
+# Calculate accuracy score the 4rd model
+pred4 <- predict(model4,test,type='response')
+pred4 <- as.factor(ifelse(pred4>0.5,1,0))
+caret::confusionMatrix(pred4,as.factor(test$is_canceled))
+```
+
+```{r}
+
+#Check Variable Importance the 4rd Model
+V <- caret::varImp(model4, scale = FALSE)
+V
+
+```
+```{r}
+
+ggplot2::ggplot(V, aes(x=reorder(rownames(V),Overall), y=Overall)) +
+geom_point( color="blue", size=4, alpha=0.6)+
+geom_segment( aes(x=rownames(V), xend=rownames(V), y=0, yend=Overall), 
+color='skyblue') +
+xlab('Variable')+
+ylab('Overall Importance')+
+theme_light() +
+coord_flip() 
+
+```
+```{r}
+
+exp(coef(model4))
+
+```
+
+
+hotel, adr, dan total_of_special_requests masih menjadi 3 besar variabel yang paling berdampak terhadap pembatalan pemesanan hotel.
+
+
+
+Interpretasi dari model2 diatas adalah sebagai berikut.
+
+Jika semua variabel independen dianggap konstan, maka odds pelanggan akan membatalkan pemesanan hotel adalah sebesar 3.459807e-310 kali.
+
+Jika pelanggan memilih hotel sebagai tempat menginap, maka odds pelanggan akan membatalkan pemesanan hotel akan meningkat sebesar 2.180039e-01 kali.
+
+Setiap kenaikan 1 satuan pada variabel lead_time akan meningkatkan odds pelanggan akan membatalkan pemesanan hotel sebesar 1.001693e+00 kali.
+
+Setiap kenaikan 1 satuan pada variabel arrival_date_year akan meningkatkan odds pelanggan akan membatalkan pemesanan hotel sebesar 1.422785e+00 kali.
+
+Setiap kenaikan 1 satuan pada variabel arrival_date_week_number akan meningkatkan odds pelanggan akan membatalkan pemesanan hotel sebesar 9.877216e-01 kali.
+
+Setiap kenaikan 1 satuan pada variabel stays_in_week_nights akan meningkatkan odds pelanggan akan membatalkan pemesanan hotel sebesar 1.170426e+00 kali.
+
+Setiap kenaikan 1 satuan pada variabel booking_changes akan meningkatkan odds pelanggan akan membatalkan pemesanan hotel sebesar 6.430150e-01 kali.
+
+Setiap kenaikan 1 satuan pada variabel adr akan meningkatkan odds pelanggan akan membatalkan pemesanan hotel sebesar 1.012933e+00 kali.
+
+Setiap kenaikan 1 satuan pada variabel total_of_special_requests akan meningkatkan odds pelanggan akan membatalkan pemesanan hotel sebesar 4.786673e-01 kali.
+
+
+     
+  
+
